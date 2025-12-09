@@ -10,7 +10,7 @@
 
 // Unified shared constants (mirrors server header)
 #define SERVER_PORT 56700
-#define SERVER_IP   "172.29.11.215"
+#define SERVER_IP   "127.0.0.1"
 #define BUFFER_SIZE 512
 #define QLEN  6
 
