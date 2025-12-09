@@ -1,9 +1,9 @@
 /*
  * main.c
  *
- * TCP Server - Template for Computer Networks assignment
+ * UDP Server - Template for Computer Networks assignment
  *
- * This file contains the boilerplate code for a TCP server
+ * This file contains the boilerplate code for a UDP server
  * portable across Windows, Linux and macOS.
  */
 
@@ -108,8 +108,8 @@ int main(int argc, char *argv[]) {
 		return 0;
 	}
 #endif
-	//creazione della socket
-	int my_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	// creazione della socket UDP
+	int my_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 
 	if (my_socket < 0) {
 		errorhandler("errore nella creazione del socket.\n");
@@ -134,39 +134,20 @@ int main(int argc, char *argv[]) {
 	}
 
 	// socket binding
-	if (bind(my_socket, (struct sockaddr*) &server_addr, sizeof(server_addr)) <0) {
+	if (bind(my_socket, (struct sockaddr*) &server_addr, sizeof(server_addr)) < 0) {
 		errorhandler("errore nella bind.\n");
 		closesocket(my_socket);
 		return -1;
 	}
-
-	// settaggio della socket in listening
-	
-	if (listen (my_socket, QLEN) < 0) {
-		errorhandler("errore nella listen.\n");
-		closesocket(my_socket);
-		return -1;
-	}
-
-	// accettazione connessioni dai client
-	struct sockaddr_in cad; //structure for the client address
-	int client_socket;      //socket descriptor for the client
-	int client_len;         //the size of the client address
-	printf( "In attesa di connessioni sulla porta %d...\n", port );
+	// server UDP in ascolto (nessuna listen/accept per UDP)
+	printf("Server UDP in ascolto sulla porta %d...\n", port);
 
 	while (1) {
-		client_len = sizeof(cad); //set the size of the client address
-		if ( (client_socket=accept(my_socket, (struct sockaddr *)&cad,
-		&client_len)) < 0 ) {
-			errorhandler("errore nella accept.\n");
-			closesocket(my_socket);	//chiusura della connesione
-			clearwinsock();
-			return -1;
+		// Ogni iterazione gestisce un singolo datagram di richiesta
+		if (handleclientconnection(my_socket, NULL) < 0) {
+			// In caso di errore di rete grave, si interrompe il server
+			break;
 		}
-		// gestione della connessione con il client
-		char *client_ip = inet_ntoa(cad.sin_addr);
-		printf( "Gestione del client %s\n", client_ip );
-		handleclientconnection(client_socket, client_ip);
 	}// fine while loop
 
 	printf("Server terminato.\n");
@@ -177,23 +158,36 @@ int main(int argc, char *argv[]) {
 } // main end
 
 
-int handleclientconnection(int client_socket, const char *client_ip) {
+int handleclientconnection(int client_socket, const char *client_ip_unused) {
+	// Server UDP: riceve una richiesta in un singolo datagram
 	// Protocollo binario: richiesta fissa 65 byte (1 tipo + 64 città)
 	unsigned char reqbuf[65];
-	size_t needed = sizeof(reqbuf);
-	size_t offset = 0;
-	while (offset < needed) {
-		int r = recv(client_socket, (char*)reqbuf + offset, (int)(needed - offset), 0);
-		if (r <= 0) {
-			errorhandler("Errore nella ricezione della richiesta.\n");
-			closesocket(client_socket);
-			return -1;
-		}
-		offset += r;
+	struct sockaddr_in client_addr;
+#if defined(_WIN32)
+	int client_len = (int)sizeof(client_addr);
+#else
+	socklen_t client_len = (socklen_t)sizeof(client_addr);
+#endif
+	int rcvd = recvfrom(client_socket,
+					 (char *)reqbuf,
+					 (int)sizeof(reqbuf),
+					 0,
+					 (struct sockaddr *)&client_addr,
+					 &client_len);
+	if (rcvd < 0) {
+		errorhandler("Errore nella ricezione della richiesta.\n");
+		return -1;
 	}
+
+	// Se la dimensione non è quella attesa, richiesta non necessariamente valida
+	if (rcvd != (int)sizeof(reqbuf)) {
+		printf("Datagram di dimensione inattesa (%d), attesi %zu byte.\n", rcvd, sizeof(reqbuf));
+	}
+
 	char req_type = (char)reqbuf[0];
 	char city[65];
-	memcpy(city, &reqbuf[1], 64);
+	memset(city, 0, sizeof(city));
+	memcpy(city, &reqbuf[1], (rcvd > 1 && (rcvd - 1) < (int)sizeof(city)) ? (size_t)(rcvd - 1) : (size_t)64);
 	city[64] = '\0'; // Garantisce terminazione
 	// Normalizza city rimuovendo trailing null/spazi
 	int clen = (int)strlen(city);
@@ -201,7 +195,13 @@ int handleclientconnection(int client_socket, const char *client_ip) {
 		city[clen-1] = '\0';
 		clen--;
 	}
-	printf("Richiesta '%c %s' dal client ip %s\n", req_type ? req_type : '-', city[0] ? city : "(vuota)", client_ip);
+
+	// Calcola IP del client a partire dall'indirizzo del datagram
+	char *client_ip = inet_ntoa(client_addr.sin_addr);
+	printf("Richiesta '%c %s' dal client ip %s\n",
+			req_type ? req_type : '-',
+			city[0] ? city : "(vuota)",
+			client_ip ? client_ip : "(sconosciuto)");
 
 	// Validazione e costruzione risposta (unificata)
 	char type_lower = tolower((unsigned char)req_type);
@@ -220,21 +220,18 @@ int handleclientconnection(int client_socket, const char *client_ip) {
 	fbits = htonl(fbits);
 	memcpy(&respbuf[5], &fbits, 4);
 
-	// Invio completo (gestione invii parziali)
-	size_t remaining = sizeof(respbuf);
-	size_t sent_total = 0;
-	while (remaining > 0) {
-		int s = send(client_socket, (char*)respbuf + sent_total, (int)remaining, 0);
-		if (s <= 0) {
-			errorhandler("Errore nell'invio della risposta.\n");
-			closesocket(client_socket);
-			return -1;
-		}
-		sent_total += s;
-		remaining -= s;
+	// Invio della risposta tramite UDP (invio atomico del datagram)
+	int sent = sendto(client_socket,
+				   (const char *)respbuf,
+				   (int)sizeof(respbuf),
+				   0,
+				   (struct sockaddr *)&client_addr,
+				   client_len);
+	if (sent != (int)sizeof(respbuf)) {
+		errorhandler("Errore nell'invio della risposta.\n");
+		return -1;
 	}
 
-	closesocket(client_socket);
 	return 0;
 }
 
