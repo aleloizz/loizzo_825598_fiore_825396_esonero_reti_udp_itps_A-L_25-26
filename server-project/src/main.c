@@ -198,10 +198,24 @@ int handleclientconnection(int client_socket, const char *client_ip_unused) {
 
 	// Calcola IP del client a partire dall'indirizzo del datagram
 	char *client_ip = inet_ntoa(client_addr.sin_addr);
-	printf("Richiesta '%c %s' dal client ip %s\n",
+	// Risolve l'hostname del client (es. 127.0.0.1 -> localhost)
+	char host[256];
+	struct hostent *he = gethostbyaddr((const char *)&client_addr.sin_addr,
+							 sizeof(client_addr.sin_addr),
+							 AF_INET);
+	if (he != NULL && he->h_name != NULL) {
+		strncpy(host, he->h_name, sizeof(host) - 1);
+		host[sizeof(host) - 1] = '\0';
+	} else {
+		strncpy(host, "sconosciuto", sizeof(host) - 1);
+		host[sizeof(host) - 1] = '\0';
+	}
+
+	printf("Richiesta ricevuta da %s (ip %s): type='%c', city='%s'\n",
+			host,
+			client_ip ? client_ip : "(sconosciuto)",
 			req_type ? req_type : '-',
-			city[0] ? city : "(vuota)",
-			client_ip ? client_ip : "(sconosciuto)");
+			city[0] ? city : "(vuota)");
 
 	// Validazione e costruzione risposta (unificata)
 	char type_lower = tolower((unsigned char)req_type);
