@@ -159,6 +159,7 @@ int main(int argc, char *argv[]) {
 
 
 int handleclientconnection(int client_socket, const char *client_ip_unused) {
+	(void)client_ip_unused; // parametro inutilizzato (mantiene compatibilità con il prototipo)
 	// Server UDP: riceve una richiesta in un singolo datagram
 	// Protocollo binario: richiesta fissa 65 byte (1 tipo + 64 città)
 	unsigned char reqbuf[65];
@@ -306,8 +307,22 @@ weather_response_t build_weather_response(char type, const char *city) {
 	}
 
 	// Validazione city
-	if (city == NULL || *city == '\0' || citycheck(city) != 0) {
-		// Città non disponibile
+	if (city == NULL || *city == '\0') {
+		// Città mancante: trattiamo come "non disponibile"
+		r.status = STATUS_CITY_NOT_AVAILABLE;
+		return r;
+	}
+	// Se la città contiene caratteri speciali vietati, la richiesta è
+	// considerata non valida (non "città non disponibile").
+	for (const char *p = city; *p != '\0'; ++p) {
+		if (*p == '@' || *p == '$' || *p == '%' || *p == '#') {
+			// Richiesta non valida per formato scorretto del campo città
+			r.status = STATUS_INVALID_REQUEST;
+			return r;
+		}
+	}
+	if (citycheck(city) != 0) {
+		// Città ben formata ma non disponibile nel database
 		r.status = STATUS_CITY_NOT_AVAILABLE;
 		return r;
 	}
