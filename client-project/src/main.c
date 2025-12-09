@@ -248,7 +248,7 @@ int main(int argc, char *argv[])
     my_inet_ntop(AF_INET, &server_addr.sin_addr, resolved_ip, sizeof(resolved_ip));
     {
         struct in_addr addr = server_addr.sin_addr;
-        struct hostent *he2 = gethostbyaddr(&addr, sizeof(addr), AF_INET);
+        struct hostent *he2 = gethostbyaddr((const char *)&addr, sizeof(addr), AF_INET);
         if (he2 && he2->h_name) {
             strncpy(resolved_name, he2->h_name, sizeof(resolved_name) - 1);
             resolved_name[sizeof(resolved_name) - 1] = '\0';
@@ -431,7 +431,7 @@ int main(int argc, char *argv[])
         print_ip[sizeof(print_ip) - 1] = '\0';
         /* reverse lookup the peer address */
         struct in_addr addr = peer_addr.sin_addr;
-        struct hostent *he3 = gethostbyaddr(&addr, sizeof(addr), AF_INET);
+        struct hostent *he3 = gethostbyaddr((const char *)&addr, sizeof(addr), AF_INET);
         if (he3 && he3->h_name) {
             strncpy(print_name, he3->h_name, sizeof(print_name) - 1);
             print_name[sizeof(print_name) - 1] = '\0';
