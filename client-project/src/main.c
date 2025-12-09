@@ -1,6 +1,6 @@
 /* main.c
  * TCP Weather Client
-*/
+ */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,7 +24,7 @@
 
 #include "protocol.h"
 
-//Correzione problema lettura caratteri speciali in console Windows
+// Correzione problema lettura caratteri speciali in console Windows
 #if defined _WIN32
 #define DEG_C_SUFFIX "C"
 #else
@@ -48,11 +48,14 @@
 static int my_inet_pton(int af, const char *src, void *dst)
 {
 #if defined _WIN32
-    if (af != AF_INET) return 0;
+    if (af != AF_INET)
+        return 0;
     unsigned long a = inet_addr(src);
-    if (a == INADDR_NONE) {
+    if (a == INADDR_NONE)
+    {
         struct hostent *he = gethostbyname(src);
-        if (!he) return 0;
+        if (!he)
+            return 0;
         memcpy(dst, he->h_addr_list[0], he->h_length);
         return 1;
     }
@@ -82,12 +85,17 @@ static int my_inet_pton(int af, const char *src, void *dst)
 static const char *my_inet_ntop(int af, const void *src, char *dst, size_t size)
 {
 #if defined _WIN32
-    if (af != AF_INET) return NULL;
+    if (af != AF_INET)
+        return NULL;
     const struct in_addr *in = (const struct in_addr *)src;
     const char *s = inet_ntoa(*in);
-    if (!s) return NULL;
-    strncpy(dst, s, size - 1);
-    dst[size - 1] = '\0';
+    if (!s)
+        return NULL;
+    size_t len = strlen(s);
+    if (len >= size)
+        len = size - 1;
+    memcpy(dst, s, len);
+    dst[len] = '\0';
     return dst;
 #else
     return inet_ntop(af, src, dst, (socklen_t)size);
@@ -106,41 +114,45 @@ static const char *my_inet_ntop(int af, const void *src, char *dst, size_t size)
 
 /*
  * send_all
- * Assicura l'invio di tutti i byte del buffer sul socket. `send` potrebbe
- * inviare un numero di byte inferiore a quelli richiesti, pertanto si itera
- * finché tutto il buffer non è stato inviato o si verifica un errore.
+ * Invia tutti i byte dal buffer attraverso il socket.
+ * Per UDP con connect(), invia il datagram completo in una singola chiamata.
+ *
+ * Parametri:
+ *  - sock: file descriptor del socket
+ *  - buf: buffer contenente i dati da inviare
+ *  - len: numero di byte da inviare
+ *
  * Restituisce 0 in caso di successo, -1 in caso di errore.
  */
 int send_all(int sock, const void *buf, size_t len)
 {
-    /* UDP is message-oriented: send the datagram once and ensure the
-     * kernel accepted the full payload. For connected UDP sockets a
-     * single send() corresponds to a single datagram. Looping and
-     * attempting to read/write partial datagrams (TCP-style) can
-     * deadlock or produce incorrect behaviour. */
     int sent = send(sock, buf, (int)len, 0);
-    if (sent < 0) return -1;
-    if ((size_t)sent != len) return -1;
+    if (sent < 0)
+        return -1;
+    if ((size_t)sent != len)
+        return -1;
     return 0;
 }
 
 /*
  * recv_all
- * Riceve esattamente `len` byte dal socket. Poiché `recv` può restituire
- * meno byte di quelli richiesti, si itera finché non si riceve l'intero
- * buffer o si verifica un errore/chiusura della connessione.
- * Restituisce 0 in caso di successo, -1 in caso di errore.
+ * Riceve esattamente il numero specificato di byte dal socket.
+ * Per UDP con connect(), riceve un datagram completo.
+ *
+ * Parametri:
+ *  - sock: file descriptor del socket
+ *  - buf: buffer dove memorizzare i dati ricevuti
+ *  - len: numero di byte da ricevere
+ *
+ * Restituisce 0 in caso di successo, -1 in caso di errore o chiusura connessione.
  */
 int recv_all(int sock, void *buf, size_t len)
 {
-    /* For UDP we expect a single datagram containing the full message.
-     * Call recv once and require that the received length matches the
-     * expected `len`. Repeated recv calls (TCP-style) are not valid
-     * for datagram sockets because datagram boundaries are preserved
-     * and a second recv would block waiting for a new datagram. */
     int r = recv(sock, buf, (int)len, 0);
-    if (r <= 0) return -1;
-    if ((size_t)r != len) return -1;
+    if (r <= 0)
+        return -1;
+    if ((size_t)r != len)
+        return -1;
     return 0;
 }
 
@@ -171,9 +183,12 @@ int validaporta(const char *s, int *out_port)
     char *end;
     errno = 0;
     long v = strtol(s, &end, 10);
-    if (errno != 0) return 0;
-    if (*end != '\0') return 0;
-    if (v < 1 || v > 65535) return 0;
+    if (errno != 0)
+        return 0;
+    if (*end != '\0')
+        return 0;
+    if (v < 1 || v > 65535)
+        return 0;
     *out_port = (int)v;
     return 1;
 }
@@ -190,25 +205,35 @@ int main(int argc, char *argv[])
      * -p port   : porta del server (opzionale)
      * -r request: stringa obbligatoria con il formato "type city"
      */
-    for (int i = 1; i < argc; ++i) {
-        if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
+    for (int i = 1; i < argc; ++i)
+    {
+        if (strcmp(argv[i], "-s") == 0 && i + 1 < argc)
+        {
             server = argv[++i];
-        } else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
+        }
+        else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc)
+        {
             ++i;
-            if (!validaporta(argv[i], &port)) {
+            if (!validaporta(argv[i], &port))
+            {
                 fprintf(stderr, "Porta non valida: %s\n", argv[i]);
                 return 1;
             }
-        } else if (strcmp(argv[i], "-r") == 0 && i + 1 < argc) {
+        }
+        else if (strcmp(argv[i], "-r") == 0 && i + 1 < argc)
+        {
             request = argv[++i];
-        } else {
-            //print_usage(argv[0]);
+        }
+        else
+        {
+            // print_usage(argv[0]);
             return 1;
         }
     }
 
-    if (!request) {
-        //print_usage(argv[0]);
+    if (!request)
+    {
+        // print_usage(argv[0]);
         return 1;
     }
 
@@ -218,7 +243,8 @@ int main(int argc, char *argv[])
      */
 #if defined _WIN32
     WSADATA wsa_data;
-    if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
+    if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0)
+    {
         fprintf(stderr, "WSAStartup failed\n");
         return 1;
     }
@@ -231,9 +257,11 @@ int main(int argc, char *argv[])
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons((uint16_t)port);
-    if (my_inet_pton(AF_INET, server, &server_addr.sin_addr) != 1) {
+    if (my_inet_pton(AF_INET, server, &server_addr.sin_addr) != 1)
+    {
         struct hostent *he = gethostbyname(server);
-        if (!he) {
+        if (!he)
+        {
             fprintf(stderr, "Failed to resolve server address\n");
 #if defined _WIN32
             WSACleanup();
@@ -249,12 +277,21 @@ int main(int argc, char *argv[])
     {
         struct in_addr addr = server_addr.sin_addr;
         struct hostent *he2 = gethostbyaddr((const char *)&addr, sizeof(addr), AF_INET);
-        if (he2 && he2->h_name) {
-            strncpy(resolved_name, he2->h_name, sizeof(resolved_name) - 1);
-            resolved_name[sizeof(resolved_name) - 1] = '\0';
-        } else {
-            strncpy(resolved_name, resolved_ip, sizeof(resolved_name) - 1);
-            resolved_name[sizeof(resolved_name) - 1] = '\0';
+        if (he2 && he2->h_name)
+        {
+            size_t len = strlen(he2->h_name);
+            if (len >= sizeof(resolved_name))
+                len = sizeof(resolved_name) - 1;
+            memcpy(resolved_name, he2->h_name, len);
+            resolved_name[len] = '\0';
+        }
+        else
+        {
+            size_t len = strlen(resolved_ip);
+            if (len >= sizeof(resolved_name))
+                len = sizeof(resolved_name) - 1;
+            memcpy(resolved_name, resolved_ip, len);
+            resolved_name[len] = '\0';
         }
     }
 
@@ -272,49 +309,59 @@ int main(int argc, char *argv[])
      *  - "pippo bari" -> token 'pippo' ha lunghezza>1 -> richiesta non valida
      */
     const char *p = request;
-    while (*p && isspace((unsigned char)*p)) p++;
+    while (*p && isspace((unsigned char)*p))
+        p++;
     const char *token_start = p;
-    while (*p && !isspace((unsigned char)*p)) p++;
+    while (*p && !isspace((unsigned char)*p))
+        p++;
     size_t token_len = (size_t)(p - token_start);
-    if (token_len != 1) {
+    if (token_len != 1)
+    {
         // Token non valido: stampiamo il messaggio richiesto senza contattare il server
         printf("Ricevuto risultato dal server %s (ip %s). Richiesta non valida\n", resolved_name, resolved_ip);
         return 1;
     }
     char type = token_start[0];
-    while (*p && isspace((unsigned char)*p)) p++;
+    while (*p && isspace((unsigned char)*p))
+        p++;
     char city[64];
     memset(city, 0, sizeof(city));
     /* Validate city: no tabs allowed and max length 63 (plus null). */
-    if (strchr(p, '\t') != NULL) {
+    if (strchr(p, '\t') != NULL)
+    {
         printf("Ricevuto risultato dal server %s (ip %s). Richiesta non valida\n", resolved_name, resolved_ip);
         return 1;
     }
-    if (strlen(p) > 63) {
+    size_t city_len = strlen(p);
+    if (city_len == 0 || city_len > 63)
+    {
         printf("Ricevuto risultato dal server %s (ip %s). Richiesta non valida\n", resolved_name, resolved_ip);
         return 1;
     }
-    strncpy(city, p, sizeof(city) - 1);
+    memcpy(city, p, city_len);
+    city[city_len] = '\0';
 
     /* (DNS resolution already performed earlier) */
 
     int sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock < 0) {
+    if (sock < 0)
+    {
         perror("socket");
-    #if defined _WIN32
+#if defined _WIN32
         WSACleanup();
-    #endif
+#endif
         return 1;
-        }
+    }
 
-        if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+    if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
+    {
         perror("connect");
         closesocket(sock);
-    #if defined _WIN32
+#if defined _WIN32
         WSACleanup();
-    #endif
+#endif
         return 1;
-        }
+    }
 
     /*
      * Preparazione della richiesta in formato binario fisso: 1 byte per il
@@ -325,8 +372,13 @@ int main(int argc, char *argv[])
     unsigned char reqbuf[65];
     memset(reqbuf, 0, sizeof(reqbuf));
     reqbuf[0] = (unsigned char)type;
-    strncpy((char *)&reqbuf[1], city, 63);
-    if (send_all(sock, reqbuf, sizeof(reqbuf)) != 0) {
+    size_t clen = strlen(city);
+    if (clen > 63)
+        clen = 63;
+    memcpy(&reqbuf[1], city, clen);
+    reqbuf[1 + clen] = '\0';
+    if (send_all(sock, reqbuf, sizeof(reqbuf)) != 0)
+    {
         fprintf(stderr, "Failed to send request\n");
         closesocket(sock);
 #if defined _WIN32
@@ -344,7 +396,8 @@ int main(int argc, char *argv[])
      */
     // Receive response: 4 bytes status (network), 1 byte type, 4 bytes float
     unsigned char respbuf[9];
-    if (recv_all(sock, respbuf, sizeof(respbuf)) != 0) {
+    if (recv_all(sock, respbuf, sizeof(respbuf)) != 0)
+    {
         fprintf(stderr, "Failed to receive response\n");
         closesocket(sock);
 #if defined _WIN32
@@ -375,13 +428,19 @@ int main(int argc, char *argv[])
 #endif
     int got_peer = 0;
     char peer_ip[INET_ADDRSTRLEN] = "";
-    if (getpeername(sock, (struct sockaddr *)&peer_addr, &peer_len) == 0) {
+    if (getpeername(sock, (struct sockaddr *)&peer_addr, &peer_len) == 0)
+    {
         my_inet_ntop(AF_INET, &peer_addr.sin_addr, peer_ip, sizeof(peer_ip));
         got_peer = 1;
-    } else {
+    }
+    else
+    {
         /* Fallback to the resolved IP we obtained earlier via DNS. */
-        strncpy(peer_ip, resolved_ip, sizeof(peer_ip) - 1);
-        peer_ip[sizeof(peer_ip) - 1] = '\0';
+        size_t len = strlen(resolved_ip);
+        if (len >= sizeof(peer_ip))
+            len = sizeof(peer_ip) - 1;
+        memcpy(peer_ip, resolved_ip, len);
+        peer_ip[len] = '\0';
     }
 
     /*
@@ -392,12 +451,15 @@ int main(int argc, char *argv[])
      * decimale.
      */
     // Capitalizza la prima lettera della città per stampa estetica
-    if (city[0]) city[0] = (char)toupper((unsigned char)city[0]);
+    if (city[0])
+        city[0] = (char)toupper((unsigned char)city[0]);
 
     // Build message per spec
     char message[256];
-    if (status == STATUS_SUCCESS) {
-        switch (rtype) {
+    if (status == STATUS_SUCCESS)
+    {
+        switch (rtype)
+        {
         case 't':
             snprintf(message, sizeof(message), "%s: Temperatura = %.1f%s", city, value, DEG_C_SUFFIX);
             break;
@@ -414,11 +476,17 @@ int main(int argc, char *argv[])
             snprintf(message, sizeof(message), "Tipo di dato non valido");
             break;
         }
-    } else if (status == STATUS_CITY_NOT_AVAILABLE) {
+    }
+    else if (status == STATUS_CITY_NOT_AVAILABLE)
+    {
         snprintf(message, sizeof(message), "Citta' non disponibile");
-    } else if (status == STATUS_INVALID_REQUEST) {
+    }
+    else if (status == STATUS_INVALID_REQUEST)
+    {
         snprintf(message, sizeof(message), "Richiesta non valida");
-    } else {
+    }
+    else
+    {
         snprintf(message, sizeof(message), "Errore");
     }
 
@@ -426,24 +494,45 @@ int main(int argc, char *argv[])
      * otherwise use the resolved values from the original server input. */
     char print_ip[INET_ADDRSTRLEN] = "";
     char print_name[256] = "";
-    if (got_peer) {
-        strncpy(print_ip, peer_ip, sizeof(print_ip) - 1);
-        print_ip[sizeof(print_ip) - 1] = '\0';
+    if (got_peer)
+    {
+        size_t len = strlen(peer_ip);
+        if (len >= sizeof(print_ip))
+            len = sizeof(print_ip) - 1;
+        memcpy(print_ip, peer_ip, len);
+        print_ip[len] = '\0';
         /* reverse lookup the peer address */
         struct in_addr addr = peer_addr.sin_addr;
         struct hostent *he3 = gethostbyaddr((const char *)&addr, sizeof(addr), AF_INET);
-        if (he3 && he3->h_name) {
-            strncpy(print_name, he3->h_name, sizeof(print_name) - 1);
-            print_name[sizeof(print_name) - 1] = '\0';
-        } else {
-            strncpy(print_name, print_ip, sizeof(print_name) - 1);
-            print_name[sizeof(print_name) - 1] = '\0';
+        if (he3 && he3->h_name)
+        {
+            size_t nlen = strlen(he3->h_name);
+            if (nlen >= sizeof(print_name))
+                nlen = sizeof(print_name) - 1;
+            memcpy(print_name, he3->h_name, nlen);
+            print_name[nlen] = '\0';
         }
-    } else {
-        strncpy(print_ip, resolved_ip, sizeof(print_ip) - 1);
-        print_ip[sizeof(print_ip) - 1] = '\0';
-        strncpy(print_name, resolved_name, sizeof(print_name) - 1);
-        print_name[sizeof(print_name) - 1] = '\0';
+        else
+        {
+            size_t nlen = strlen(print_ip);
+            if (nlen >= sizeof(print_name))
+                nlen = sizeof(print_name) - 1;
+            memcpy(print_name, print_ip, nlen);
+            print_name[nlen] = '\0';
+        }
+    }
+    else
+    {
+        size_t len = strlen(resolved_ip);
+        if (len >= sizeof(print_ip))
+            len = sizeof(print_ip) - 1;
+        memcpy(print_ip, resolved_ip, len);
+        print_ip[len] = '\0';
+        size_t nlen = strlen(resolved_name);
+        if (nlen >= sizeof(print_name))
+            nlen = sizeof(print_name) - 1;
+        memcpy(print_name, resolved_name, nlen);
+        print_name[nlen] = '\0';
     }
 
     printf("Ricevuto risultato dal server %s (ip %s). %s\n", print_name, print_ip, message);
