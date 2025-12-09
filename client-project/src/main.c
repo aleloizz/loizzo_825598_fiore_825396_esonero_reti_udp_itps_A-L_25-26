@@ -111,16 +111,16 @@ static const char *my_inet_ntop(int af, const void *src, char *dst, size_t size)
  * finché tutto il buffer non è stato inviato o si verifica un errore.
  * Restituisce 0 in caso di successo, -1 in caso di errore.
  */
-static int send_all(int sock, const void *buf, size_t len)
+int send_all(int sock, const void *buf, size_t len)
 {
-    const char *p = (const char *)buf;
-    size_t remaining = len;
-    while (remaining > 0) {
-        int sent = send(sock, p, (int)remaining, 0);
-        if (sent <= 0) return -1;
-        p += sent;
-        remaining -= sent;
-    }
+    /* UDP is message-oriented: send the datagram once and ensure the
+     * kernel accepted the full payload. For connected UDP sockets a
+     * single send() corresponds to a single datagram. Looping and
+     * attempting to read/write partial datagrams (TCP-style) can
+     * deadlock or produce incorrect behaviour. */
+    int sent = send(sock, buf, (int)len, 0);
+    if (sent < 0) return -1;
+    if ((size_t)sent != len) return -1;
     return 0;
 }
 
@@ -131,16 +131,16 @@ static int send_all(int sock, const void *buf, size_t len)
  * buffer o si verifica un errore/chiusura della connessione.
  * Restituisce 0 in caso di successo, -1 in caso di errore.
  */
-static int recv_all(int sock, void *buf, size_t len)
+int recv_all(int sock, void *buf, size_t len)
 {
-    char *p = (char *)buf;
-    size_t remaining = len;
-    while (remaining > 0) {
-        int r = recv(sock, p, (int)remaining, 0);
-        if (r <= 0) return -1;
-        p += r;
-        remaining -= r;
-    }
+    /* For UDP we expect a single datagram containing the full message.
+     * Call recv once and require that the received length matches the
+     * expected `len`. Repeated recv calls (TCP-style) are not valid
+     * for datagram sockets because datagram boundaries are preserved
+     * and a second recv would block waiting for a new datagram. */
+    int r = recv(sock, buf, (int)len, 0);
+    if (r <= 0) return -1;
+    if ((size_t)r != len) return -1;
     return 0;
 }
 
@@ -151,7 +151,7 @@ static int recv_all(int sock, void *buf, size_t len)
  * come bit pattern (uint32_t) e qui si usano ntohl + memcpy per rispettare
  * l'endianness e le aliasing rules.
  */
-static float ntohf(uint32_t i)
+float ntohf(uint32_t i)
 {
     i = ntohl(i);
     float f;
@@ -166,7 +166,7 @@ static float ntohf(uint32_t i)
  * Se valida, scrive il valore in `out_port` e restituisce 1.
  * Altrimenti restituisce 0.
  */
-static int validaporta(const char *s, int *out_port)
+int validaporta(const char *s, int *out_port)
 {
     char *end;
     errno = 0;
@@ -224,6 +224,40 @@ int main(int argc, char *argv[])
     }
 #endif
 
+    /* Resolve server address (IPv4) and perform forward/reverse DNS
+     * lookup early so we can display canonical server name and IP even
+     * when the client detects a local request parsing error. */
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons((uint16_t)port);
+    if (my_inet_pton(AF_INET, server, &server_addr.sin_addr) != 1) {
+        struct hostent *he = gethostbyname(server);
+        if (!he) {
+            fprintf(stderr, "Failed to resolve server address\n");
+#if defined _WIN32
+            WSACleanup();
+#endif
+            return 1;
+        }
+        server_addr.sin_addr = *(struct in_addr *)he->h_addr_list[0];
+    }
+
+    char resolved_ip[INET_ADDRSTRLEN] = "";
+    char resolved_name[256] = "";
+    my_inet_ntop(AF_INET, &server_addr.sin_addr, resolved_ip, sizeof(resolved_ip));
+    {
+        struct in_addr addr = server_addr.sin_addr;
+        struct hostent *he2 = gethostbyaddr(&addr, sizeof(addr), AF_INET);
+        if (he2 && he2->h_name) {
+            strncpy(resolved_name, he2->h_name, sizeof(resolved_name) - 1);
+            resolved_name[sizeof(resolved_name) - 1] = '\0';
+        } else {
+            strncpy(resolved_name, resolved_ip, sizeof(resolved_name) - 1);
+            resolved_name[sizeof(resolved_name) - 1] = '\0';
+        }
+    }
+
     /*
      * Parsing della richiesta nel formato "type city". Si considera il primo
      * carattere non-spazio come il `type` e il resto della stringa come
@@ -244,39 +278,27 @@ int main(int argc, char *argv[])
     size_t token_len = (size_t)(p - token_start);
     if (token_len != 1) {
         // Token non valido: stampiamo il messaggio richiesto senza contattare il server
-        printf("Ricevuto risultato dal server ip %s. Richiesta non valida\n", server);
+        printf("Ricevuto risultato dal server %s (ip %s). Richiesta non valida\n", resolved_name, resolved_ip);
         return 1;
     }
     char type = token_start[0];
     while (*p && isspace((unsigned char)*p)) p++;
     char city[64];
     memset(city, 0, sizeof(city));
+    /* Validate city: no tabs allowed and max length 63 (plus null). */
+    if (strchr(p, '\t') != NULL) {
+        printf("Ricevuto risultato dal server %s (ip %s). Richiesta non valida\n", resolved_name, resolved_ip);
+        return 1;
+    }
+    if (strlen(p) > 63) {
+        printf("Ricevuto risultato dal server %s (ip %s). Richiesta non valida\n", resolved_name, resolved_ip);
+        return 1;
+    }
     strncpy(city, p, sizeof(city) - 1);
 
-    /*
-     * Risoluzione dell'indirizzo del server. Si usa `my_inet_pton` per
-     * compatibilità con diverse toolchain; se fallisce si prova a risolvere
-     * il nome host con `gethostbyname`.
-     */
-    // Resolve server address (IPv4)
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons((uint16_t)port);
-    // Resolve server address (IPv4) with compatibility wrapper
-    if (my_inet_pton(AF_INET, server, &server_addr.sin_addr) != 1) {
-        struct hostent *he = gethostbyname(server);
-        if (!he) {
-            fprintf(stderr, "Failed to resolve server address\n");
-#if defined _WIN32
-            WSACleanup();
-#endif
-            return 1;
-        }
-        server_addr.sin_addr = *(struct in_addr *)he->h_addr_list[0];
-    }
+    /* (DNS resolution already performed earlier) */
 
-    int sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+    int sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock < 0) {
         perror("socket");
     #if defined _WIN32
@@ -351,11 +373,15 @@ int main(int argc, char *argv[])
 #else
     socklen_t peer_len = sizeof(peer_addr);
 #endif
+    int got_peer = 0;
     char peer_ip[INET_ADDRSTRLEN] = "";
     if (getpeername(sock, (struct sockaddr *)&peer_addr, &peer_len) == 0) {
         my_inet_ntop(AF_INET, &peer_addr.sin_addr, peer_ip, sizeof(peer_ip));
+        got_peer = 1;
     } else {
-        strncpy(peer_ip, server, sizeof(peer_ip) - 1);
+        /* Fallback to the resolved IP we obtained earlier via DNS. */
+        strncpy(peer_ip, resolved_ip, sizeof(peer_ip) - 1);
+        peer_ip[sizeof(peer_ip) - 1] = '\0';
     }
 
     /*
@@ -396,7 +422,31 @@ int main(int argc, char *argv[])
         snprintf(message, sizeof(message), "Errore");
     }
 
-    printf("Ricevuto risultato dal server ip %s. %s\n", peer_ip, message);
+    /* Decide which IP/name to print: prefer the peer info when available,
+     * otherwise use the resolved values from the original server input. */
+    char print_ip[INET_ADDRSTRLEN] = "";
+    char print_name[256] = "";
+    if (got_peer) {
+        strncpy(print_ip, peer_ip, sizeof(print_ip) - 1);
+        print_ip[sizeof(print_ip) - 1] = '\0';
+        /* reverse lookup the peer address */
+        struct in_addr addr = peer_addr.sin_addr;
+        struct hostent *he3 = gethostbyaddr(&addr, sizeof(addr), AF_INET);
+        if (he3 && he3->h_name) {
+            strncpy(print_name, he3->h_name, sizeof(print_name) - 1);
+            print_name[sizeof(print_name) - 1] = '\0';
+        } else {
+            strncpy(print_name, print_ip, sizeof(print_name) - 1);
+            print_name[sizeof(print_name) - 1] = '\0';
+        }
+    } else {
+        strncpy(print_ip, resolved_ip, sizeof(print_ip) - 1);
+        print_ip[sizeof(print_ip) - 1] = '\0';
+        strncpy(print_name, resolved_name, sizeof(print_name) - 1);
+        print_name[sizeof(print_name) - 1] = '\0';
+    }
+
+    printf("Ricevuto risultato dal server %s (ip %s). %s\n", print_name, print_ip, message);
 
     closesocket(sock);
 #if defined _WIN32

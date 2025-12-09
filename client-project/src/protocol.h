@@ -10,7 +10,7 @@
 
 // Unified shared constants (mirrors server header)
 #define SERVER_PORT 56700
-#define SERVER_IP   "127.0.0.1"
+#define SERVER_IP   "172.29.11.215"
 #define BUFFER_SIZE 512
 #define QLEN  6
 
@@ -43,11 +43,8 @@ int send_all(int sock, const void *buf, size_t len);
 int recv_all(int sock, void *buf, size_t len);
 float ntohf(uint32_t i);
 int validaporta(const char *s, int *out_port);
-static float ntohf(uint32_t i);
-
 // Cross-platform inet_pton/ntop wrappers
-static int my_inet_pton(int af, const char *src, void *dst);
-static const char *my_inet_ntop(int af, const void *src, char *dst, size_t size);
+// (platform-specific wrappers are implemented locally in client/server sources)
 
 // Data generation functions (shared)
 float get_temperature(void); // -10.0 .. 40.0
